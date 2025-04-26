@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+. build_utils && cd ..
+
+CM_DIR='build/release'
+
+clean_build

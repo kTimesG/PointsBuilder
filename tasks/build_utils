@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+OS_TYPE=$(uname)
+
+if [ "$OS_TYPE" = 'Linux' ]; then
+  CMAKE=cmake
+  NINJA=ninja
+  NUM_THREADS=18
+
+  export SECP256K1_DIR=~/proj/3rd_party/secp256k1
+  export CC=clang
+elif [ $OS_TYPE = 'Darwin' ]; then
+  CMAKE=cmake
+  NINJA=ninja
+  NUM_THREADS=8
+
+  export SECP256K1_DIR=~/proj/3rd_party/secp256k1
+else
+  exit 0
+fi
+
+SRC_DIR=.
+
+BUILD_TYPE=Release
+
+clean_build() {
+  # clean can fail if build dir does not yet exist
+  [[ -d "$CM_DIR" ]] \
+&& "$CMAKE" --build "$CM_DIR" --target clean -j "$NUM_THREADS"
+
+  "$CMAKE" \
+   -G Ninja \
+   -S "$SRC_DIR" \
+   -B "$CM_DIR" \
+   -DCMAKE_MAKE_PROGRAM="$NINJA" \
+   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+&& \
+  "$CMAKE" --build "$CM_DIR" --target all -j "$NUM_THREADS" -v
+
+  PB_BIN="./dist/pb"
+  if [ -f "$PB_BIN" ]; then
+    echo 'Stripping release binary'
+    strip "$PB_BIN"
+  fi
+}
