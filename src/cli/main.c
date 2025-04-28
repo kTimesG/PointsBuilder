@@ -21,10 +21,10 @@ limitations under the License.
 #include "../common_def.h"
 
 /**
- * Nntry point.
+ * Entry point.
  *
  * @param argc      Number of program arguments.
- * @param argv      Array of program argument.
+ * @param argv      Array of program arguments.
  *
  * @return          Program exit code.
  */
@@ -75,6 +75,17 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (baseKey <= 1023) {
+        // OK, it seems that even if starting from key 1, results are OK,
+        // HOWEVER: we might have cases where a point in the G...2*n*G interval
+        // may try to get added with a constant point with the same X.
+        // TODO: this case needs to be found, in case it actually exists.
+        fprintf(stderr,
+            "Base key should be larger than 1023 to avoid incorrect results\n"
+        );
+        return EXIT_FAILURE;
+    }
+
     if (0 == rangeSize) {
         fprintf(stderr, "Range size cannot be 0\n");
         return EXIT_FAILURE;
@@ -92,7 +103,6 @@ int main(int argc, char **argv) {
 
     if (NULL == dbName) {
         printf("No DB name given - compute only mode\n");
-        return EXIT_FAILURE;
     }
 
     int err = pointsBuilderGenerate(
