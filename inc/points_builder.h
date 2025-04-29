@@ -26,11 +26,11 @@ extern "C" {
 // Don't include or use other lib headers here.
 
 int pointsBuilderGenerate(
-    uint64_t baseKey,
+    const char * baseKey,
     uint64_t rangeSize,
     uint32_t numLoopsPerThread,
     uint16_t numThreads,
-    char * dbName
+    const char * dbName
 );
 
 #ifdef __cplusplus

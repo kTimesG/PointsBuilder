@@ -29,7 +29,7 @@ limitations under the License.
  * @return          Program exit code.
  */
 int main(int argc, char **argv) {
-    U64 baseKey = 0;
+    const char * baseKey = NULL;
     U64 rangeSize = 0;
     U32 numLoopsPerLaunch = 1;
     U16 numThreads = 1;
@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
 
         switch (argv[arg_idx][1]) {
             case 'b':
-                baseKey = argc > ++arg_idx ? strtoull(argv[arg_idx], NULL, 16) : 0;
+                baseKey = argc > ++arg_idx ? argv[arg_idx] : NULL;
                 break;
             case 's':
                 rangeSize = argc > ++arg_idx ? strtoull(argv[arg_idx], NULL, 10) : 0;
@@ -70,19 +70,8 @@ int main(int argc, char **argv) {
         ++arg_idx;
     }
 
-    if (0 == baseKey) {
-        fprintf(stderr, "Base key cannot be 0\n");
-        return EXIT_FAILURE;
-    }
-
-    if (baseKey <= 1023) {
-        // OK, it seems that even if starting from key 1, results are OK,
-        // HOWEVER: we might have cases where a point in the G...2*n*G interval
-        // may try to get added with a constant point with the same X.
-        // TODO: this case needs to be found, in case it actually exists.
-        fprintf(stderr,
-            "Base key should be larger than 1023 to avoid incorrect results\n"
-        );
+    if (NULL == baseKey) {
+        fprintf(stderr, "Base key is required.\n");
         return EXIT_FAILURE;
     }
 
