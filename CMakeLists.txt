@@ -55,7 +55,7 @@ find_package(SQLite3 REQUIRED)
     )
 
     target_compile_options(PointsBuilder PRIVATE
-        # -march=native         # illegal instr on Xeon
+        -march=native
         #-fvisibility=hidden
         -Wall
         # treat warnings as errors

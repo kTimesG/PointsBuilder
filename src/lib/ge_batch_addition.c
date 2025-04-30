@@ -42,7 +42,20 @@ limitations under the License.
 #define FE_MUL(r, a, b)     secp256k1_fe_mul_inner((r).n, (a).n, (b).n)
 #define FE_SQR(r, x)        secp256k1_fe_sqr_inner((r).n, (x).n)
 #define FE_ADD(r, d)        secp256k1_fe_impl_add(&(r), &(d))
+#define FE_ADD_2(r, a, b)   fe_add_into(&(r), &(a), &(b))
 #define FE_NEG(r, a, m)     secp256k1_fe_impl_negate_unchecked(&(r), &(a), (m))
+
+static void fe_add_into(
+    secp256k1_fe * r,
+    const secp256k1_fe * a,
+    const secp256k1_fe * b
+) {
+    r->n[0] = a->n[0] + b->n[0];
+    r->n[1] = a->n[1] + b->n[1];
+    r->n[2] = a->n[2] + b->n[2];
+    r->n[3] = a->n[3] + b->n[3];
+    r->n[4] = a->n[4] + b->n[4];
+}
 
 static
 int compute_const_points(
@@ -55,20 +68,27 @@ int compute_const_points(
     // The first point is the delta to the next center position
     mpz_t k;
     mpz_init_set_ui(k, 2 * numPoints - 1);
-    int err = mpz_to_ge(out++, ctx, k);
+    int err = mpz_to_ge(out, ctx, k);
     mpz_clear(k);
 
     if (err) return err;
 
+    FE_NEG(out->x, out->x, 1);
+    secp256k1_fe_normalize_var(&out->x);
+
     if (numPoints < 2) return 0;
 
     // all other points are 1, 2, ... N - 1
-    *out = secp256k1_ge_const_g;
-    secp256k1_gej_set_ge(&gej, out++);
+    *(++out) = secp256k1_ge_const_g;
+    secp256k1_gej_set_ge(&gej, out);
+    FE_NEG(out->x, out->x, 1);
+    secp256k1_fe_normalize_var(&out++->x);
 
     for (U32 i = 1; i < numPoints - 1; i++) {
         secp256k1_gej_add_ge_var(&gej, &gej, &secp256k1_ge_const_g, NULL);
-        secp256k1_ge_set_gej(out++, &gej);
+        secp256k1_ge_set_gej(out, &gej);
+        FE_NEG(out->x, out->x, 1);
+        secp256k1_fe_normalize_var(&out++->x);
     }
 
     return 0;
@@ -84,14 +104,12 @@ void batch_addition(
     secp256k1_fe * xzOut,
     const U32 batch_size
 ) {
-    secp256k1_fe t1, t2, t3;
+    secp256k1_fe x1n, t1, t2, t3;
 
     S64 i;
 
     for (i = 0; i < batch_size; i++) {
-        xz[i] = ge[0].x;
-        FE_NEG(t1, jp[i].x, 1);         // T1 = -x2
-        FE_ADD(xz[i], t1);              // XZ[i] = x1 - x2
+        FE_ADD_2(xz[i], ge->x, jp[i].x);            // XZ[i] = x1 - x2
     }
 
     // up-sweep inversion tree [SIMD friendly]
@@ -111,12 +129,16 @@ void batch_addition(
     secp256k1_ge * _a = &tmp;
     const secp256k1_fe * _inv = xzOut + batch_size - 1;
 
+    FE_NEG(x1n, ge->x, 1);                          // X1N = -x1                        m = 1 + 1 = 2
+
     // Output the starting middle point as a result
     secp256k1_fe_to_storage(xOut, &ge->x);
     *yParityOut = ge->y.n[0] & 1;
 
     for (i = batch_size - 1;; i--) {
         const secp256k1_ge * _b = &jp[i];
+
+        FE_ADD_2(t3, x1n, _b->x);                   // T3 = - x1 - x2
 
         // 1. do P + Q
         tmp = ge[0];
@@ -125,14 +147,11 @@ void batch_addition(
         FE_ADD(_a->y, t1);                          // Y1 = y1 - y2                     m = max_y + 2(1)
         FE_MUL(_a->y, _a->y, *_inv);                // Y1 = m = (y1 - y2) / (x1 - x2)   m = 1
         FE_SQR(t2, _a->y);                          // T2 = m**2                        m = 1
-        FE_NEG(t3, _b->x, 1);                       // T3 = -x2
-        FE_ADD(t2, t3);                             // T2 = m**2 - x2                   m = 1 + 2(1) = 3(2)
-        FE_NEG(_a->x, _a->x, 1);                    // X1 = -x1                         m = max_x + 1
-        FE_ADD(_a->x, t2);                          // X1 = x3 = m**2 - x1 - x2         max_x = 3 + max_x + 1
+        FE_ADD_2(_a->x, t2, t3);                    // X1 = x3 = m**2 - x1 - x2         max_x = 3 + max_x + 1
         secp256k1_fe_normalize_var(&_a->x);
 
-        FE_NEG(t2, _a->x, 1);                       // T2 = -x3                         m = 1 + 1 = 2
-        FE_ADD(t2, _b->x);                          // T1 = x2 - x3                     m = 2 + 1 = 3
+        FE_ADD_2(t2, _a->x, _b->x);                 // T2 = x3 - x2                     m = 1 + 1 = 2
+        FE_NEG(t2, t2, 2);                          // T2 = x2 - x3                     m = 2 + 1 = 3
         FE_MUL(_a->y, _a->y, t2);                   // Y1 = m * (x2 - x3)               m = 1
         FE_ADD(_a->y, t1);                          // Y1 = y3 = m * (x2 - x3) - y2     m = 1 + 2 = 3
         secp256k1_fe_normalize_var(&_a->y);
@@ -149,17 +168,14 @@ void batch_addition(
         // 2. Do P - Q using the same inverse
         tmp = ge[0];
 
-        FE_ADD(_a->y, _b->y);                       // Y1 = y1 + y2                     m = max_y + 2(1)
+        FE_ADD(_a->y, _b->y);                       // Y1 = y1 + y2
         FE_MUL(_a->y, _a->y, *_inv);                // Y1 = m = (y1 + y2) / (x1 - x2)   m = 1
         FE_SQR(t2, _a->y);                          // T2 = m**2                        m = 1
-        FE_NEG(t3, _b->x, 1);                       // T3 = -x2
-        FE_ADD(t2, t3);                             // T2 = m**2 - x2                   m = 1 + 2(1) = 3(2)
-        FE_NEG(_a->x, _a->x, 1);                    // X1 = -x1                         m = max_x + 1
-        FE_ADD(_a->x, t2);                          // X1 = x3 = m**2 - x1 - x2         max_x = 3 + max_x + 1
+        FE_ADD_2(_a->x, t2, t3);                    // X1 = x3 = m**2 - x1 - x2
         secp256k1_fe_normalize_var(&_a->x);
 
-        FE_NEG(t2, _a->x, 1);                       // T2 = -x3                         m = 1 + 1 = 2
-        FE_ADD(t2, _b->x);                          // T1 = x2 - x3                     m = 2 + 1 = 3
+        FE_ADD_2(t2, _a->x, _b->x);                 // T2 = x3 - x2                     m = 1 + 1 = 2
+        FE_NEG(t2, t2, 2);                          // T2 = x2 - x3                     m = 2 + 1 = 3
         FE_MUL(_a->y, _a->y, t2);                   // Y1 = m * (x2 - x3)               m = 1
         FE_ADD(_a->y, _b->y);                       // Y1 = y3 = m * (x2 - x3) + y2     m = 1 + 2 = 3
         secp256k1_fe_normalize_var(&_a->y);
@@ -236,10 +252,12 @@ int compute_results(
     printf("Computing ~ %.0f points...\n", fNumTotal);
 
     double ompStartTime = omp_get_wtime();
+    double ompProgressTime = ompStartTime;
 
     for (U64 launchIdx = 0; launchIdx < numLaunches; launchIdx++) {
         // Generate results step (allows parallelization)
 #pragma omp parallel for \
+schedule(static) \
 num_threads(numThreads) \
 default(none) \
 shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParityOut, ge_pivot, ge_const, p_trees, treeSize)
@@ -266,14 +284,16 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
             }
         }
 
-        if (launchIdx % 64 == 0) {
-            double elapsedTime = omp_get_wtime() - ompStartTime;
+        double now = omp_get_wtime();
+        if (now - ompProgressTime > 1) {
+            double elapsedTime = now - ompStartTime;
             double fNumDone = (double) (launchIdx + 1) * fTotalResPerLaunch;
             double speed = fNumDone / elapsedTime;
+            ompProgressTime = now;
 
             printf(
-                "\r[%.1f%%] [%.3f s] BatchAdd speed: %.3f keys/s",
-                fNumDone * 100 / fNumTotal, elapsedTime, speed
+                "\r[%.1f%%] [%.0f s] BatchAdd speed: %.0f keys/s [%.1f Mk/ts]",
+                fNumDone * 100 / fNumTotal, elapsedTime, speed, speed / (numThreads * 1000000)
             );
             fflush(stdout);
         }
@@ -304,7 +324,7 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
 
                     if (0 != memcmp(x, &xCheck, 32)) {
                         fprintf(stderr,
-                            "Check failed k %llu launch %lu loop %lu tId %d idx %d\n"
+                            "Check failed k %" PRIu64 " launch %lu loop %lu tId %d idx %d\n"
                             "\t%016lx | %016lx\n",
                             keyOffset, launchIdx, loopIdx, tId, i, x->n[0], xCheck.n[0]
                         );
@@ -427,7 +447,7 @@ int batch_add_range(
         }
 
         if (!err) {
-            compute_results(
+            err = compute_results(
                 xOut, yParityOut,
                 numLoopsPerLaunch, numLaunches, numThreads,
                 ge_pivot, ge_const, p_trees,
