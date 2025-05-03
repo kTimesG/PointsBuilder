@@ -153,6 +153,7 @@ int pointsBuilderGenerate(
     U64 batchSize,
     U32 numLoopsPerThread,
     U16 numThreads,
+    U32 progressMinInterval,
     const char * dbName
 ) {
     secp256k1_context * ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
@@ -191,7 +192,7 @@ int pointsBuilderGenerate(
 
     err = batch_add_range(
         ctx, numLaunches, numLoopsPerThread, numThreads, mpBaseKey,
-        result_cb
+        result_cb, progressMinInterval
     );
 
     double ompEndTime = omp_get_wtime();

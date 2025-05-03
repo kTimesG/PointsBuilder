@@ -27,13 +27,14 @@ A library for generating and storing the X coordinates of secp256k1 points, asso
 
 Command line arguments:
 
-| Arg            | Description.                                           |
-|----------------|--------------------------------------------------------|
-| -b BASE_KEY    | Range start of the scalar, in hexidecimal,             |
-| -s RANGE_SIZE  | Range size for which to generate points.               |
-| -n NUM_LOOPS   | Number of batched additions each thread does / launch. |
-| -t NUM_THREADS | Number of threads to use.                              |
-| -o DB_NAME     | Optional. Database filename to write into.             |
+| Arg            | Description.                                                                                 |
+|----------------|----------------------------------------------------------------------------------------------|
+| -b BASE_KEY    | Range start of the scalar, in hexidecimal,                                                   |
+| -s RANGE_SIZE  | Range size for which to generate points, in decimal and < 2**64                              |
+| -n NUM_LOOPS   | Number of batched additions, per thread, per launch.                                         |
+| -t NUM_THREADS | Number of threads to use.                                                                    |
+| -p NUM_SECONDS | Minimum time interval for printing progress update.<br/>Set to 0 to disable progress output. |
+| -o DB_NAME     | Optional. Database filename in which to store X bytes and key offsets.                       |
 
 To benchmark the performance, do not specify an output database.
 

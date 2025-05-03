@@ -30,6 +30,7 @@ int pointsBuilderGenerate(
     uint64_t rangeSize,
     uint32_t numLoopsPerThread,
     uint16_t numThreads,
+    uint32_t progressMinInterval,
     const char * dbName
 );
 

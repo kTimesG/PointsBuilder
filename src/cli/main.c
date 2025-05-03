@@ -33,6 +33,7 @@ int main(int argc, char **argv) {
     U64 rangeSize = 0;
     U32 numLoopsPerLaunch = 1;
     U16 numThreads = 1;
+    U32 progressMinInterval = 3;
     char *dbName = NULL;
 
     int arg_idx = 1; // skip arg 0 = binary path
@@ -55,6 +56,9 @@ int main(int argc, char **argv) {
                 break;
             case 't':
                 numThreads = argc > ++arg_idx ? strtoul(argv[arg_idx], NULL, 10) : 0;
+                break;
+            case 'p':
+                progressMinInterval = argc > ++arg_idx ? strtoul(argv[arg_idx], NULL, 10) : 0;
                 break;
             case 'n':
                 numLoopsPerLaunch = argc > ++arg_idx ? strtoul(argv[arg_idx], NULL, 10) : 0;
@@ -95,7 +99,9 @@ int main(int argc, char **argv) {
     }
 
     int err = pointsBuilderGenerate(
-        baseKey, rangeSize, numLoopsPerLaunch, numThreads, dbName
+        baseKey, rangeSize,
+        numLoopsPerLaunch, numThreads, progressMinInterval,
+        dbName
     );
 
     if (err) {

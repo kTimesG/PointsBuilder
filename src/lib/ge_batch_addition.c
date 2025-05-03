@@ -222,6 +222,7 @@ int compute_results(
     secp256k1_fe * p_trees,
     const U32 resultsSize,
     const U32 treeSize,
+    const U32 progressMinInterval,
     const secp256k1_context * ctx,
     mpz_srcptr baseKey,
     const on_result_cb callback
@@ -236,6 +237,7 @@ int compute_results(
     printf("Computing ~ %.0f points...\n", fNumTotal);
 
     double ompStartTime = omp_get_wtime();
+    double ompProgressTime = ompStartTime;
 
     for (U64 launchIdx = 0; launchIdx < numLaunches; launchIdx++) {
         // Generate results step (allows parallelization)
@@ -266,16 +268,21 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
             }
         }
 
-        if (launchIdx % 64 == 0) {
-            double elapsedTime = omp_get_wtime() - ompStartTime;
-            double fNumDone = (double) (launchIdx + 1) * fTotalResPerLaunch;
-            double speed = fNumDone / elapsedTime;
+        if (progressMinInterval) {
+            double now = omp_get_wtime();
 
-            printf(
-                "\r[%.1f%%] [%.3f s] BatchAdd speed: %.3f keys/s",
-                fNumDone * 100 / fNumTotal, elapsedTime, speed
-            );
-            fflush(stdout);
+            if (now - ompProgressTime >= progressMinInterval) {
+                double elapsedTime = now - ompStartTime;
+                double fNumDone = (double) (launchIdx + 1) * fTotalResPerLaunch;
+                double speed = fNumDone / elapsedTime;
+                ompProgressTime = now;
+
+                printf(
+                    "\r[%.1f%%] [%.0f s] BatchAdd speed: %.0f keys/s [%.1f Mk/ts]",
+                    fNumDone * 100 / fNumTotal, elapsedTime, speed, speed / (numThreads * 1000000)
+                );
+                fflush(stdout);
+            }
         }
 
         // Handle results (serialized)
@@ -304,7 +311,7 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
 
                     if (0 != memcmp(x, &xCheck, 32)) {
                         fprintf(stderr,
-                            "Check failed k %llu launch %lu loop %lu tId %d idx %d\n"
+                            "Check failed k %" PRIu64 " launch %lu loop %lu tId %d idx %d\n"
                             "\t%016lx | %016lx\n",
                             keyOffset, launchIdx, loopIdx, tId, i, x->n[0], xCheck.n[0]
                         );
@@ -355,7 +362,8 @@ int batch_add_range(
     U64 numLoopsPerLaunch,
     U16 numThreads,
     mpz_srcptr baseKey,
-    on_result_cb callback
+    on_result_cb callback,
+    U32 progressMinInterval
 ) {
     size_t szTotalMem = 0;
     size_t szMem;
@@ -363,7 +371,6 @@ int batch_add_range(
     // A large constant array may fail stack allocation at runtime
 #if GE_CONST_ON_HEAP
     szMem = NUM_CONST_POINTS * sizeof(secp256k1_ge);
-    szTotalMem += szMem;
 
     secp256k1_ge * ge_const = malloc(szMem);
 #else
@@ -416,9 +423,13 @@ int batch_add_range(
 #endif
         && NULL != p_trees
     ) {
+        szMem = NUM_CONST_POINTS * sizeof(secp256k1_ge);
         printf(
-            "Batch add: using %lu KB [T: %u L: %lu x %lu]\n",
-            szTotalMem >> 10, numThreads, numLaunches, numLoopsPerLaunch
+            "Batch add: using %zu KB [T: %" PRIu16 " L: %" PRIu64 " x %" PRIu64 "]"
+            " Memory/thread: %zu kB\n",
+            (szTotalMem + szMem) >> 10,
+            numThreads, numLaunches, numLoopsPerLaunch,
+            (szTotalMem / numThreads) >> 10
         );
 
         err = compute_const_points(ctx, ge_const, NUM_CONST_POINTS);
@@ -427,11 +438,11 @@ int batch_add_range(
         }
 
         if (!err) {
-            compute_results(
+            err = compute_results(
                 xOut, yParityOut,
                 numLoopsPerLaunch, numLaunches, numThreads,
                 ge_pivot, ge_const, p_trees,
-                resultsSize, treeSize,
+                resultsSize, treeSize, progressMinInterval,
                 ctx, baseKey, callback
             );
 

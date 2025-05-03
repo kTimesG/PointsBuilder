@@ -35,7 +35,8 @@ int batch_add_range(
     U64 numLoopsPerLaunch,
     U16 numThreads,
     mpz_srcptr baseKey,
-    on_result_cb callback
+    on_result_cb callback,
+    U32 progressMinInterval
 );
 
 #endif // POINTS_BUILDER_GE_BATCH_ADD_H
