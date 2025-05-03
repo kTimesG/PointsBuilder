@@ -14,6 +14,8 @@ elif [ $OS_TYPE = 'Darwin' ]; then
   NINJA=ninja
   NUM_THREADS=8
 
+  # assume "brew install libomp" was already ran
+  export OpenMP_ROOT=$(brew --prefix)/opt/libomp
   export SECP256K1_DIR=~/proj/3rd_party/secp256k1
 else
   exit 0

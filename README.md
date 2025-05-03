@@ -2,6 +2,13 @@
 
 A library for generating and storing the X coordinates of secp256k1 points, associated with consecutive scalars.
 
+This library and the demonstrative CLI binary were tested to be compatible with:
+
+- Ubuntu 22.04;
+- macOS (Apple Silicon).
+
+To compile and run on Windows, you might try with WSL (not tested, but likely works).
+
 ## Features
 
 - extremely fast batched addition, built using libsecp256k1 primitives;
@@ -22,6 +29,11 @@ A library for generating and storing the X coordinates of secp256k1 points, asso
 1. Clone and build [libsecp256k1](https://github.com/bitcoin-core/secp256k1) if you don't already have it.
 2. Edit `tasks/build_utils` and set the correct path to the location of your libsecp256k1.
 3. Run `tasks/build_release` to build the program.
+
+On macOS, you will need to install OpenMP and GMP support via homebrew, or else the build will fail:
+```shell
+brew install gmp libomp
+```
 
 ## Usage
 
