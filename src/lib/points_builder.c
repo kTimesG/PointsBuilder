@@ -116,7 +116,7 @@ int validateRange(
         // If P == Q or P == -Q, the addition will be incorrect.
         // Only two possible cases exist:
         // First pivot: base + C - 1 == 2C - 1 -> base == C
-        // Last pivot: base + C - 1 == -2C + 1 -> base == -3C + 2 mod N
+        // Last pivot: lastBase + C - 1 == -2C + 1 -> lastBase == -3C + 2 mod N
         // All other X collision cases imply that the point at infinity is crossed,
         // but this condition was already checked.
 
@@ -124,16 +124,17 @@ int validateRange(
             // Pivot == Const[0]
             err = -2;
         }
+        else {
+            // Check if the last pivot matches - Const[0]
+            // Equivalent to arriving at the point at infinity after all loops
+            mpz_set_ui(mpTmp, numTotalLoops);
+            mpz_mul_ui(mpTmp, mpTmp, NUM_CONST_POINTS * 2 - 1);
+            mpz_add_ui(mpTmp, mpTmp, NUM_CONST_POINTS - 1);
+            mpz_add(mpTmp, mpTmp, mpBaseKey);
 
-        // Check if the last pivot matches - Const[0]
-        // Equivalent to arriving at the point at infinity after all loops
-        mpz_set_ui(mpTmp, numTotalLoops);
-        mpz_mul_ui(mpTmp, mpTmp, NUM_CONST_POINTS * 2 - 1);
-        mpz_add_ui(mpTmp, mpTmp, NUM_CONST_POINTS - 1);
-        mpz_add(mpTmp, mpTmp, mpBaseKey);
-
-        if (mpz_cmp(mpTmp, mpN) == 0) {
-            err = -3;
+            if (mpz_cmp(mpTmp, mpN) == 0) {
+                err = -3;
+            }
         }
 
         if (err) {
@@ -144,6 +145,63 @@ int validateRange(
 
     mpz_clear(mpTmp);
     mpz_clear(mpN);
+
+    return err;
+}
+
+static
+int validateRangePubBase(
+    const secp256k1_ge * base_ge,
+    const secp256k1_context * ctx,
+    U64 rangeSize,
+    U64 numTotalLoops
+) {
+    mpz_t mpTmp;
+
+    // Base scalar unknown; impossible to check if scalar range includes 0 == N
+    fprintf(stderr, "Warning: assuming end of range is below N.\n");
+    fprintf(stderr, "\tIf this is not true, results will be wrong.\n");
+
+    secp256k1_ge forbidden_ge;
+
+    // Same logic as scalar-based validation, but in the EC domain
+    // Case 1: baseKey == NUM_CONST_POINTS
+    mpz_init_set_ui(mpTmp, NUM_CONST_POINTS);
+
+    int err = mpz_to_ge(&forbidden_ge, ctx, mpTmp);
+    if (err) goto cleanRet;
+
+    if (memcmp(&base_ge->x, &forbidden_ge.x, sizeof(secp256k1_fe)) == 0) {
+        // if Y1 == Y2, Pivot == Const[0]
+        // if Y1 != Y2, first pivot = 1 and 0 is crossed
+        err = -2;
+    }
+    else {
+        // Check if the last pivot matches - Const[0]
+        numTotalLoops = 1;
+        // Equivalent to arriving at the point at infinity after all loops
+        mpz_set_ui(mpTmp, numTotalLoops);
+        mpz_mul_ui(mpTmp, mpTmp, NUM_CONST_POINTS * 2 - 1);
+        mpz_add_ui(mpTmp, mpTmp, NUM_CONST_POINTS - 1);
+
+        err = mpz_to_ge(&forbidden_ge, ctx, mpTmp);
+        if (err) goto cleanRet;
+
+        // Case 2: last pivot + baseKey == N == 0
+        if (memcmp(&base_ge->x, &forbidden_ge.x, sizeof(secp256k1_fe)) == 0) {
+            // if Y1 == Y2, 0 is reached on last phase
+            // if Y1 != Y2, 0 is crossed at some time (k and -k both seen)
+            err = -3;
+        }
+    }
+
+    if (err) {
+        // Cannot add points that have the same X value.
+        fprintf(stderr, "Cannot compute this range - decrease base key by G.\n");
+    }
+
+    cleanRet:
+    mpz_clear(mpTmp);
 
     return err;
 }
@@ -164,21 +222,40 @@ int pointsBuilderGenerate(
     }
 
     mpz_t mpBaseKey;
-
-    int err = mpz_init_set_str(mpBaseKey, baseKey, 16);
-    if (err || mpz_size(mpBaseKey) == 0) {
-        fprintf(stderr, "Invalid base key\n");
-        return -1;
-    }
-
-    gmp_printf("Base Key: %064Zx\n", mpBaseKey);
+    int err;
 
     U64 numLaunches = computeNumLaunches(
         &batchSize, NUM_CONST_POINTS, numThreads, numLoopsPerThread
     );
 
-    err = validateRange(mpBaseKey, batchSize, numLaunches * numLoopsPerThread);
-    if (err) return err;
+    secp256k1_ge base_ge;
+    size_t bk_len = strlen(baseKey);
+    const U8 useBasePub = bk_len > 32 * 2;
+
+    if (useBasePub) {
+        // Base key is a serialized public key
+        err = hex_pub_to_ge(&base_ge, ctx, baseKey);
+        if (err) return err;
+
+        printf("Base Pub: %s\n", baseKey);
+
+        err = validateRangePubBase(&base_ge, ctx, batchSize, numLaunches * numLoopsPerThread);
+        if (err) return err;
+    }
+    else {
+        // Base key is a scalar (private key)
+        err = mpz_init_set_str(mpBaseKey, baseKey, 16);
+
+        if (err || mpz_size(mpBaseKey) == 0) {
+            fprintf(stderr, "Invalid base key\n");
+            return -1;
+        }
+
+        gmp_printf("Base Key: %064Zx\n", mpBaseKey);
+
+        err = validateRange(mpBaseKey, batchSize, numLaunches * numLoopsPerThread);
+        if (err) return err;
+    }
 
     on_result_cb result_cb = NULL;
 
@@ -191,7 +268,9 @@ int pointsBuilderGenerate(
     double ompStartTime = omp_get_wtime();
 
     err = batch_add_range(
-        ctx, numLaunches, numLoopsPerThread, numThreads, mpBaseKey,
+        ctx, numLaunches, numLoopsPerThread, numThreads,
+        useBasePub ? NULL : mpBaseKey,
+        useBasePub ? &base_ge: NULL,
         result_cb, progressMinInterval
     );
 
@@ -208,7 +287,9 @@ int pointsBuilderGenerate(
 
     secp256k1_context_destroy(ctx);
 
-    mpz_clear(mpBaseKey);
+    if (!useBasePub) {
+        mpz_clear(mpBaseKey);
+    }
 
     return err;
 }

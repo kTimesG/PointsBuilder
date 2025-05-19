@@ -41,7 +41,7 @@ Command line arguments:
 
 | Arg            | Description.                                                                                 |
 |----------------|----------------------------------------------------------------------------------------------|
-| -b BASE_KEY    | Range start of the scalar, in hexidecimal,                                                   |
+| -b BASE_KEY    | Hexidecimal. Either the first scalar, or the first public key of the range.                  |
 | -s RANGE_SIZE  | Range size for which to generate points, in decimal and < 2**64                              |
 | -n NUM_LOOPS   | Number of batched additions, per thread, per launch.                                         |
 | -t NUM_THREADS | Number of threads to use.                                                                    |
@@ -49,6 +49,22 @@ Command line arguments:
 | -o DB_NAME     | Optional. Database filename in which to store X bytes and key offsets.                       |
 
 To benchmark the performance, do not specify an output database.
+
+If the base key is longer than 64 characters, then it is interpreted as a serialized
+public key (either compressed or uncompressed). In this case, the user is responsible
+for ensuring that the public key does not lie in the interval (N - rangeSize ... N).
+
+Example high performance usage, that computes all public keys from scalars 1 to
+1 billion. The threads are bound to the first 4 physical cores, to prevent
+context switching. Hyper-threading logical cores are not used.
+
+```shell
+export OMP_PLACES="{0},{2},{4},{6}"
+export OMP_PROC_BIND=close
+
+taskset -c 0,2,4,6 \
+./pb -b 1 -s 1000000000 -t 4 -n 4
+```
 
 Using more loops only affects how much work is being done by each thread, during
 a launch phase, and hence requires more RAM to store the results. However, this
@@ -66,7 +82,7 @@ libraries that can effectively compute all the points in a sequential range of s
 
 Some benchmarks:
 
-i9 13900H: 17 MK/s when using 1 thread, 1 loop; 74 MK/s using 14 threads.
+i9 13900H: 18 MK/s when using 1 thread and 4 loops; 78 MK/s using 6 P-threads.
 
 The performance per core may vary by the CPU's cache size. In some cases, using less cores
 but more loops, may show a larger through-put than using all cores.

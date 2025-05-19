@@ -35,6 +35,7 @@ int batch_add_range(
     U64 numLoopsPerLaunch,
     U16 numThreads,
     mpz_srcptr baseKey,
+    const secp256k1_ge * base_ge,
     on_result_cb callback,
     U32 progressMinInterval
 );

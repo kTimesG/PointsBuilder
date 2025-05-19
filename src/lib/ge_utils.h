@@ -37,18 +37,35 @@ limitations under the License.
 #define GMP_ALL_NAILS   0
 #define SCALAR_SIZE     32          // Size of a private key, in bytes
 
+/**
+ *
+ * Computes the public key of a secp256k1 scalar key.
+ *
+ * @param[out]  ge      Group element to write into.
+ * @param[in]   ctx     A valid secp256k1 context.
+ * @param[in]   k       Scalar value (private key).
+ *
+ * @return Zero on success, non-zero if an error occurred.
+ */
 int mpz_to_ge(
     secp256k1_ge * ge,
     const secp256k1_context * ctx,
     mpz_srcptr k
 );
 
-int buildPts(
+/**
+ * Parses a hex serialized public key into a group element.
+ *
+ * @param[out]  ge      Group element to write into.
+ * @param[in]   ctx     A valid secp256k1 context.
+ * @param[in]   hex_pub Serialized public key, as a hex string.
+ *
+ * @return Zero on success, non-zero if an error occurred.
+ */
+int hex_pub_to_ge(
+    secp256k1_ge * ge,
     const secp256k1_context * ctx,
-    U64 numPoints,
-    U64 baseKey,
-    U16 stride,
-    const char * dbName
+    const char * hex_pub
 );
 
 #endif // POINTS_BUILDER_GE_UTILS_H

@@ -92,3 +92,72 @@ int mpz_to_ge(
 
     return 0;
 }
+
+static inline
+int serialized_pub_to_ge(
+    secp256k1_ge * ge,
+    const secp256k1_context * ctx,
+    const U8 * input,
+    size_t input_len
+) {
+    // Ensure byte buffer is 64-bit aligned so it can work as a U64 *
+    alignas(8) secp256k1_pubkey pub;
+
+    int ret = secp256k1_ec_pubkey_parse(ctx, &pub, input, input_len);
+
+    if (1 != ret) {
+        fprintf(stderr, "Invalid public key!!\n");
+        return -1;
+    }
+
+    // Safe to cast since we have a 64-bit aligned pointer
+    secp256k1_ge_from_storage(ge, (const secp256k1_ge_storage *) &pub);
+
+    return 0;
+}
+
+int hex_pub_to_ge(
+    secp256k1_ge * ge,
+    const secp256k1_context * ctx,
+    const char * hex_pub
+) {
+    U8 raw_pub[65];
+    size_t input_len = strlen(hex_pub);
+    mpz_t tmp;
+
+    // Validate hex string length
+    if (33 * 2 != input_len && 65 * 2 != input_len) {
+        fprintf(stderr, "Invalid pubKey length: %zu\n", input_len);
+
+        return -1;
+    }
+
+    // Import from hex string
+    int err = mpz_init_set_str(tmp, hex_pub, 16);
+    if (err || mpz_size(tmp) == 0) {
+        fprintf(stderr, "Invalid public key\n");
+
+        err = -1;
+        goto cleanRet;
+    }
+
+    // Export to bytes array
+    input_len >>= 1;
+    size_t count;
+    mpz_export(raw_pub, &count, GMP_BE, input_len, GMP_BE, GMP_ALL_NAILS, tmp);
+
+    if (1 != count) {
+        fprintf(stderr, "[%zu] mpz_export failed!\n", count);
+
+        err = -1;
+        goto cleanRet;
+    }
+
+    // Parse serialized public key bytes
+    err = serialized_pub_to_ge(ge, ctx, raw_pub, input_len);
+
+    cleanRet:
+    mpz_clear(tmp);
+
+    return err;
+}

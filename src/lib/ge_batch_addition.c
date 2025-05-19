@@ -171,41 +171,140 @@ void batch_addition(
     }
 }
 
+/**
+ * Computes the first pivot GE, when the base key is provided as a scalar.
+ *
+ * @param[out] r        GE output.
+ * @param ctx           Valid secp256k1 context.
+ * @param baseKey       Private key.
+ *
+ * @return
+ */
 static
-int compute_pivots(
-    secp256k1_ge * ge_pivots,
+int compute_first_pivot_sec(
+    secp256k1_ge * r,
     const secp256k1_context * ctx,
-    const U64 numLoops,                 // >= 1
-    mpz_srcptr baseKey,
-    U16 numThreads                      // >= 1
+    mpz_srcptr baseKey
 ) {
     mpz_t k;
 
     mpz_init_set(k, baseKey);
     mpz_add_ui(k, k, NUM_CONST_POINTS - 1);
 
-    int err = mpz_to_ge(ge_pivots, ctx, k);
-
-    if (!err && numThreads > 1) {
-        // at each step, the pivot moves by 2 * numConst - 1
-        const U64 pivotStride = numLoops * (2 * NUM_CONST_POINTS - 1);
-        secp256k1_gej gej;
-        secp256k1_ge geDelta;
-
-        mpz_set_ui(k, pivotStride);
-        err = mpz_to_ge(&geDelta, ctx, k);
-
-        if (!err) {
-            secp256k1_gej_set_ge(&gej, ge_pivots);
-
-            while (--numThreads) {
-                secp256k1_gej_add_ge_var(&gej, &gej, &geDelta, NULL);
-                secp256k1_ge_set_gej_var(++ge_pivots, &gej);
-            }
-        }
-    }
+    int err = mpz_to_ge(r, ctx, k);
 
     mpz_clear(k);
+
+    return err;
+}
+
+/**
+ * Computes the initial pivots for all threads, except the first one.
+ * The first pivot is assumed to be valid, and is used as an initial offset.
+ *
+ * @param[in,out] gej_pivots    GE pivots buffer, including the first thread's pivot.
+ * @param[in] ctx               Valid secp256k1 context.
+ * @param numLoops              Total number of loops done by each thread.
+ * @param numThreads            Total number of threads. This should be > 1.
+ *
+ * @return
+ */
+static
+int compute_pivots_gej(
+    secp256k1_gej * gej_pivots,
+    const secp256k1_context * ctx,
+    const U64 numLoops,                 // >= 1
+    U16 numThreads
+) {
+    // Scalar delta between the initial pivots of two threads.
+    mpz_t kDelta;
+    // GE for delta * G
+    secp256k1_ge geDelta;
+
+    // after each loop, the pivot of each thread moves by 2 * numConst - 1
+    // const U64 delta = numLoops * (2 * NUM_CONST_POINTS - 1);
+    // Use big int to prevent 64-bit overflow
+    mpz_init_set_ui(kDelta, numLoops);
+    mpz_mul_ui(kDelta, kDelta, 2 * NUM_CONST_POINTS - 1);
+
+    int err = mpz_to_ge(&geDelta, ctx, kDelta);
+    mpz_clear(kDelta);
+
+    if (err) return err;
+
+    while (--numThreads) {
+        secp256k1_gej_add_ge_var(gej_pivots + 1, gej_pivots, &geDelta, NULL);
+        ++gej_pivots;
+    }
+
+    return 0;
+}
+
+static
+int compute_pivots(
+    secp256k1_ge * ge_pivots,
+    const secp256k1_context * ctx,
+    const secp256k1_ge * base_ge,
+    const secp256k1_ge * ge_const,
+    mpz_srcptr baseKey,
+    const U64 numLoops,                 // >= 1
+    const U16 numThreads
+) {
+    int err = 0;
+
+    secp256k1_gej gej_stack;
+    secp256k1_gej * gej_pivots;
+
+    // Computing all the pivots when the number of threads is a large value
+    // (thousands or more) can be optimized heavily, and even parallelized.
+    // For our use-case (at most a few hundred threads), the below strategy
+    // is good enough.
+    // Serially add Jacobian points one after another, and do a final conversion
+    // to affine points, using a single field inversion.
+
+    if (numThreads > 1) {
+        gej_pivots = malloc(numThreads * sizeof(secp256k1_gej));
+
+        if (NULL == gej_pivots) return -1;
+    }
+    else {
+        gej_pivots = &gej_stack;
+    }
+
+    if (NULL != base_ge) {
+        // Jacobian Pivot = BasePub + [NUM_CONST - 1] * G
+        secp256k1_gej_set_ge(gej_pivots, base_ge);
+        secp256k1_gej_add_ge_var(gej_pivots, gej_pivots, ge_const + NUM_CONST_POINTS - 1, NULL);
+
+        if (1 == numThreads) {
+            // single pivot; convert it to affine
+            secp256k1_ge_set_gej_var(ge_pivots, gej_pivots);
+        }
+    }
+    else {
+        // Affine Pivot = [baseKey + NUM_CONST - 1] * G
+        err = compute_first_pivot_sec(ge_pivots, ctx, baseKey);
+    }
+
+    if (numThreads > 1) {
+        if (!err) {
+            const int offset = NULL != baseKey ? 1 : 0;
+
+            if (offset) {
+                // The first pivot is in affine form already; init Jacobian
+                secp256k1_gej_set_ge(gej_pivots, ge_pivots);
+            }
+
+            err = compute_pivots_gej(gej_pivots, ctx, numLoops, numThreads);
+
+            if (!err) {
+                // convert all J points to affine, using a single field inversion
+                secp256k1_ge_set_all_gej_var(ge_pivots + offset, gej_pivots + offset, numThreads - offset);
+            }
+        }
+
+        free(gej_pivots);
+    }
 
     return err;
 }
@@ -224,6 +323,7 @@ int compute_results(
     const U32 treeSize,
     const U32 progressMinInterval,
     const secp256k1_context * ctx,
+    const secp256k1_ge * base_ge,
     mpz_srcptr baseKey,
     const on_result_cb callback
 ) {
@@ -301,19 +401,51 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
 
             for (U64 loopIdx = 0; loopIdx < numLoopsPerLaunch; loopIdx++) {
                 for (U32 i = 0; i < resultsSize; i++) {
-                    mpz_set(tmp, baseKey);
-                    mpz_add_ui(tmp, tmp, keyOffset);
+                    mpz_set_ui(tmp, keyOffset);
 
-                    int err = mpz_to_ge(&ge_check, ctx, tmp);
-                    if (err) return -1;
+                    if (NULL != baseKey) {
+                        mpz_add(tmp, tmp, baseKey);
+                    }
+
+                    int err;
+
+                    if (NULL == base_ge || keyOffset) {
+                        // compute either [baseKey + offset]G or [offset]G
+                        err = mpz_to_ge(&ge_check, ctx, tmp);
+                        if (err) return -1;
+                    }
+
+                    if (NULL != base_ge) {
+                        if (keyOffset) {
+                            // add offset*G to base pubKey
+                            secp256k1_gej gej_res;
+
+                            secp256k1_gej_set_ge(&gej_res, base_ge);
+                            secp256k1_gej_add_ge_var(&gej_res, &gej_res, &ge_check, NULL);
+                            secp256k1_ge_set_gej(&ge_check, &gej_res);
+
+                            // X has magnitude 1, but might not be normalized
+                            // Needed for correct 256-bit serialization
+                            secp256k1_fe_normalize_var(&ge_check.x);
+                        }
+                        else {
+                            // offset 0; basePubKey should simply match itself
+                            ge_check = *base_ge;
+                        }
+                    }
 
                     secp256k1_fe_to_storage(&xCheck, &ge_check.x);
 
                     if (0 != memcmp(x, &xCheck, 32)) {
                         fprintf(stderr,
-                            "Check failed k %" PRIu64 " launch %lu loop %lu tId %d idx %d\n"
-                            "\t%016lx | %016lx\n",
-                            keyOffset, launchIdx, loopIdx, tId, i, x->n[0], xCheck.n[0]
+                            "Check failed k %" PRIu64
+                            " launch %" PRIu64 " loop %" PRIu64
+                            " tId %" PRIu16 " idx %" PRIu32 "\n"
+                            "output: \t%016" PRIx64 " %016" PRIx64 " %016" PRIx64 " %016" PRIx64 "\n"
+                            "expect: \t%016" PRIx64 " %016" PRIx64 " %016" PRIx64 " %016" PRIx64 "\n",
+                            keyOffset, launchIdx, loopIdx, tId, i,
+                            x->n[3], x->n[2], x->n[1], x->n[0],
+                            xCheck.n[3], xCheck.n[2], xCheck.n[1], xCheck.n[0]
                         );
 
                         return -1;
@@ -362,6 +494,7 @@ int batch_add_range(
     U64 numLoopsPerLaunch,
     U16 numThreads,
     mpz_srcptr baseKey,
+    const secp256k1_ge * base_ge,
     on_result_cb callback,
     U32 progressMinInterval
 ) {
@@ -434,7 +567,12 @@ int batch_add_range(
 
         err = compute_const_points(ctx, ge_const, NUM_CONST_POINTS);
         if (!err) {
-            err = compute_pivots(ge_pivot, ctx, numLaunches * numLoopsPerLaunch, baseKey, numThreads);
+            err = compute_pivots(
+                ge_pivot, ctx,
+                base_ge, ge_const,
+                baseKey,
+                numLaunches * numLoopsPerLaunch, numThreads
+            );
         }
 
         if (!err) {
@@ -443,7 +581,7 @@ int batch_add_range(
                 numLoopsPerLaunch, numLaunches, numThreads,
                 ge_pivot, ge_const, p_trees,
                 resultsSize, treeSize, progressMinInterval,
-                ctx, baseKey, callback
+                ctx, base_ge, baseKey, callback
             );
 
             printf("\n");
